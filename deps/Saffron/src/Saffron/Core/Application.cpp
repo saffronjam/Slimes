@@ -1,5 +1,9 @@
 #include "SaffronPCH.h"
 
+#include <glad/glad.h>
+#include <SFML/Graphics.hpp>
+#include <SFML/OpenGL.hpp>
+
 #include "Saffron/Core/Application.h"
 #include "Saffron/Core/FileIOManager.h"
 #include "Saffron/Core/Global.h"
@@ -13,12 +17,25 @@
 
 namespace Se
 {
+Application* Application::s_Instance = nullptr;
 
-Application *Application::s_Instance = nullptr;
 
+void GLAPIENTRY
+MessageCallback( GLenum source,
+	GLenum type,
+	GLuint id,
+	GLenum severity,
+	GLsizei length,
+	const GLchar* message,
+	const void* userParam )
+{
+	fprintf( stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
+		( type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "" ),
+		type, severity, message );
+}
 
-Application::Application(const Properties &properties)
-	: _preLoader(CreateShared<BatchLoader>("Preloader")),
+Application::Application(const Properties& properties) :
+	_preLoader(CreateShared<BatchLoader>("Preloader")),
 	_window(properties.Name, properties.WindowWidth, properties.WindowHeight),
 	_fadeIn(FadePane::Type::In, sf::seconds(0.5f))
 {
@@ -28,18 +45,34 @@ Application::Application(const Properties &properties)
 	SE_CORE_INFO("--- Saffron 2D Framework ---");
 	SE_CORE_INFO("Creating application {0}", properties.Name);
 
-	_window.SetEventCallback([this](const sf::Event &event)
-							 { OnEvent(event); });
+	_window.SetEventCallback([this](const sf::Event& event)
+	{
+		OnEvent(event);
+	});
 
 	FileIOManager::Init(_window);
 	Gui::Init(Filepath("../../../imgui.ini"));
 
 	_preLoader->Submit([]
-					   {
-						   Gui::SetStyle(Gui::Style::Dark);
-					   }, "Initializing GUI");
+	{
+		Gui::SetStyle(Gui::Style::Dark);
+	}, "Initializing GUI");
 
 	Global::Clock::Restart();
+
+
+	if (!gladLoadGL())
+	{
+		std::cout << "Failed to initialize OpenGL context" << std::endl;
+	}
+
+
+
+	// During init, enable debug output
+	glEnable              ( GL_DEBUG_OUTPUT );
+	glDebugMessageCallback( MessageCallback, 0 );
+	
+	
 }
 
 Application::~Application()
@@ -82,9 +115,9 @@ void Application::Run()
 {
 	OnInit();
 
-	while ( _running )
+	while (_running)
 	{
-		if ( !_preLoader->IsFinished() )
+		if (!_preLoader->IsFinished())
 		{
 			RunSplashScreen();
 			_fadeIn.Start();
@@ -93,23 +126,24 @@ void Application::Run()
 		Global::Clock::Restart();
 		_window.HandleBufferedEvents();
 		_window.Clear();
+
 		RenderTargetManager::ClearAll();
-		if ( !_minimized )
+		if (!_minimized)
 		{
 			Gui::Begin();
-			for ( const auto &layer : _layerStack )
+			for (const auto& layer : _layerStack)
 			{
 				layer->OnPreFrame();
 			}
-			for ( const auto &layer : _layerStack )
+			for (const auto& layer : _layerStack)
 			{
 				layer->OnUpdate();
 			}
-			for ( const auto &layer : _layerStack )
+			for (const auto& layer : _layerStack)
 			{
 				layer->OnGuiRender();
 			}
-			for ( const auto &layer : _layerStack )
+			for (const auto& layer : _layerStack)
 			{
 				layer->OnPostFrame();
 			}
@@ -139,11 +173,11 @@ void Application::Exit()
 
 void Application::OnGuiRender()
 {
-	if ( ImGui::Begin("Stats") )
+	if (ImGui::Begin("Stats"))
 	{
 		const auto dt = Global::Clock::GetFrameTime();
 		_fpsTimer += dt;
-		if ( _fpsTimer.asSeconds() < 1.0f )
+		if (_fpsTimer.asSeconds() < 1.0f)
 		{
 			_storedFrameCount++;
 			_storedFrametime += dt;
@@ -168,9 +202,9 @@ void Application::OnGuiRender()
 	ImGui::End();
 }
 
-void Application::OnEvent(const sf::Event &event)
+void Application::OnEvent(const sf::Event& event)
 {
-	if ( event.type == event.Closed )
+	if (event.type == event.Closed)
 	{
 		OnWindowClose();
 	}
@@ -179,7 +213,7 @@ void Application::OnEvent(const sf::Event &event)
 	Keyboard::OnEvent(event);
 	Mouse::OnEvent(event);
 
-	for ( auto it = _layerStack.end(); it != _layerStack.begin(); )
+	for (auto it = _layerStack.end(); it != _layerStack.begin();)
 	{
 		(*--it)->OnEvent(event);
 	}
@@ -196,7 +230,7 @@ void Application::RunSplashScreen()
 	_preLoader->Execute();
 
 	SplashScreenPane splashScreenPane(_preLoader);
-	while ( !splashScreenPane.IsFinished() )
+	while (!splashScreenPane.IsFinished())
 	{
 		_window.Clear();
 		RenderTargetManager::ClearAll();
@@ -210,7 +244,9 @@ void Application::RunSplashScreen()
 		_window.Display();
 		Global::Clock::Restart();
 		const auto step = Global::Clock::GetFrameTime().asSeconds();
-		const auto duration = splashScreenPane.GetBatchLoader()->IsFinished() ? 0ll : std::max(0ll, static_cast<long long>(1000.0 / 60.0 - step));
+		const auto duration = splashScreenPane.GetBatchLoader()->IsFinished()
+			                      ? 0ll
+			                      : std::max(0ll, static_cast<long long>(1000.0 / 60.0 - step));
 		std::this_thread::sleep_for(std::chrono::milliseconds(duration));
 	}
 }

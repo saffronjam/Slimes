@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Layers/BaseLayer.h"
+#include "SimulationManager.h"
 
 namespace Se
 {
@@ -16,7 +17,7 @@ public:
 	void OnRenderTargetResize(const sf::Vector2f &newSize) override;
 
 private:
-
+	Shared<SimulationManager> _simMgr;
 
 };
 }

@@ -5,6 +5,10 @@ namespace Se
 void ProjectLayer::OnAttach(std::shared_ptr<BatchLoader> &loader)
 {
 	BaseLayer::OnAttach(loader);
+	loader->Submit([this]
+		{
+		}, "Create Simulation Manager");
+	_simMgr = CreateShared<SimulationManager>();
 }
 
 void ProjectLayer::OnDetach()
@@ -15,6 +19,8 @@ void ProjectLayer::OnDetach()
 void ProjectLayer::OnUpdate()
 {
 	BaseLayer::OnUpdate();
+	_simMgr->OnUpdate(_scene);
+	_simMgr->OnRender(_scene);
 }
 
 void ProjectLayer::OnGuiRender()

@@ -1,0 +1,34 @@
+#version 430
+
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(rgba32f, binding = 0) uniform image2D img_output;
+
+void main() {
+
+	float dt = 1.0 / 100.0;
+	float diffuseSpeed = 2.0;
+	float evaporateSpeed = 0.8;
+	int blendSize = 3;
+
+	vec2 id = gl_GlobalInvocationID.xy;
+	vec2 pixelId = id * 2.0;
+
+	vec4 old = imageLoad(img_output, ivec2(id.xy) ).xyzw;
+
+	vec4 accumulated = vec4(0.0);
+	for(int i = 0; i < blendSize; i++)
+	{
+		for(int j = 0; j < blendSize; j++)
+		{
+			accumulated += imageLoad(img_output, ivec2(id.xy) + ivec2(i, j) - ivec2(-1, -1) ).xyzw;
+		}
+	}
+
+	vec4 blur = accumulated / (blendSize * blendSize);
+
+	vec4 diffused = mix(old, blur, diffuseSpeed * dt);
+	vec4 final = max(vec4(0.0), diffused - evaporateSpeed * dt);
+
+	// output to a specific pixel in the image
+	imageStore(img_output, ivec2(id), final);
+}
