@@ -4,9 +4,9 @@
 
 namespace Se
 {
-struct Agent
+struct alignas(16) Agent
 {
-	alignas(16) sf::Vector2f Position;
+	sf::Vector2f Position;
 	float Angle;
 };
 }

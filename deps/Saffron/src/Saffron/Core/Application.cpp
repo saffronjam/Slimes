@@ -2,7 +2,6 @@
 
 #include <glad/glad.h>
 #include <SFML/Graphics.hpp>
-#include <SFML/OpenGL.hpp>
 
 #include "Saffron/Core/Application.h"
 #include "Saffron/Core/FileIOManager.h"
@@ -18,21 +17,6 @@
 namespace Se
 {
 Application* Application::s_Instance = nullptr;
-
-
-void GLAPIENTRY
-MessageCallback( GLenum source,
-	GLenum type,
-	GLuint id,
-	GLenum severity,
-	GLsizei length,
-	const GLchar* message,
-	const void* userParam )
-{
-	fprintf( stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
-		( type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "" ),
-		type, severity, message );
-}
 
 Application::Application(const Properties& properties) :
 	_preLoader(CreateShared<BatchLoader>("Preloader")),
@@ -65,14 +49,6 @@ Application::Application(const Properties& properties) :
 	{
 		std::cout << "Failed to initialize OpenGL context" << std::endl;
 	}
-
-
-
-	// During init, enable debug output
-	glEnable              ( GL_DEBUG_OUTPUT );
-	glDebugMessageCallback( MessageCallback, 0 );
-	
-	
 }
 
 Application::~Application()

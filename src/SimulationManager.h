@@ -10,30 +10,120 @@ namespace Se
 {
 class SimulationManager
 {
+	enum class ShapeType
+	{
+		Circle,
+		Square,
+		Random
+	};
+
+	enum class AngleType
+	{
+		CenterIn,
+		CenterOut,
+		Random
+	};
+
+	enum class PaletteType
+	{
+		Slime,
+		Fiery,
+		Greyscale,
+		Rainbow,
+		UV,
+		Count
+	};
+
+	enum class QualityType
+	{
+		Low,
+		Medium,
+		High
+	};
+
+	enum class StateType
+	{
+		Paused,
+		Running
+	};
+
 public:
-	SimulationManager();
+	explicit SimulationManager(QualityType initialQuality = QualityType::Medium);
 
 	void OnUpdate(Scene& scene);
 	void OnRender(Scene& scene);
+	void OnGuiRender();
 
 private:
-	static GLuint CreateComputeProgram(const char *filepath);
+	void UpdatePaletteTransition();
+	void UpdatePaletteData();
+
+	Function<sf::Vector2f(int)> GetPositionGenerator(ShapeType shapeType);
+	Function<float(int)> GetAngleGenerator(AngleType angleType);
+
+	void SetShape(const Function<sf::Vector2f(int)>& generator);
+	void SetAngles(const Function<float(int)>& generator);
+	void SetPalette(PaletteType desired);
+	void SetQuality(QualityType quality);
+	void SetTexSize(Uint32 width, Uint32 height);
+	void SetAgentDimensionSize(Uint32 size);
+
+	void Reset(ShapeType shapeType, AngleType angleType);
+	void Transition(ShapeType shapeTypeTo, AngleType angleTypeTo);
+
+	void RunDrawFrame();
 
 private:
-	sf::Image _simulationImage;
-	ArrayList<Agent> _agents;
+	static constexpr Uint32 _paletteWidth = 256;
 
-	sf::Texture _tex;
-
-	int _noAgents = 1000;
-	float _bodySpeed = 150.0f;
-	float _decayMult = 0.9998;
-
-	GLuint _drawProgram;
-	GLuint _blendEvapProgram;
-	GLuint _texOutput;
-	GLuint _ssbo;
+	StateType _stateType = StateType::Paused;
 	
-	static constexpr int _texWidth = 1024, _texHeight = 512;
+	QualityType _qualityType;
+	Uint32 _agentDim;
+	Uint32 _texWidth;
+	Uint32 _texHeight;
+
+	ArrayList<Agent> _agentBuffer;
+
+	sf::Image _simulationImage;
+
+	sf::Texture _outputTexture;
+	sf::Texture _dataTexture;
+
+	Shared<ComputeShader> _drawCS;
+	Shared<ComputeShader> _blendEvapCS;
+	Shared<ComputeShader> _painterCS;
+	GLuint _ssbo;
+
+	ShapeType _shapeType = ShapeType::Circle;
+	AngleType _angleType = AngleType::CenterIn;
+
+	Array<Shared<sf::Image>, static_cast<size_t>(PaletteType::Count)> _paletteImages;
+	Array<sf::Texture, static_cast<size_t>(PaletteType::Count)> _palettes;
+	sf::Image _currentPaletteImage;
+	sf::Texture _currentPaletteTexture;
+	PaletteType _desiredPalette = PaletteType::Fiery;
+	Array<sf::Vector4f, _paletteWidth> _colorsStart;
+	Array<sf::Vector4f, _paletteWidth> _colorsCurrent;
+
+	sf::Time _colorTransitionTimer;
+	sf::Time _colorTransitionDuration = sf::seconds(0.3f);
+	bool _inTransition = false;
+
+	// Gui cache
+	float _movementSpeed = 250.0f;
+	float _trailAttraction = 250.0f;
+	float _diffuseSpeed = 2.0f;
+	float _evaporateSpeed = 0.8f;
+	float _colorScale = 5.0f;
+
+	ArrayList<const char*> _shapeTypeNames;
+	ArrayList<const char*> _angleTypeNames;
+	ArrayList<const char*> _paletteTypeNames;
+	ArrayList<const char*> _qualityTypeNames;
+	int _shapeTypeIndex = static_cast<int>(_shapeType);
+	int _angleTypeIndex = static_cast<int>(_angleType);
+	int _paletteTypeIndex = static_cast<int>(_desiredPalette);
+	int _qualityTypeIndex;
 };
 }

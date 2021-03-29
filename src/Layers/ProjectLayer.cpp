@@ -40,6 +40,7 @@ void ProjectLayer::OnGuiRender()
 
 	if ( ImGui::Begin("Project") )
 	{
+		_simMgr->OnGuiRender();
 	}
 	ImGui::End();
 

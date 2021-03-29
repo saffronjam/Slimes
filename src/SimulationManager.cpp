@@ -1,137 +1,416 @@
 #include "SaffronPCH.h"
 
-//#include <SFML/OpenGL.hpp>
-
 #include "SimulationManager.h"
 
 namespace Se
 {
-SimulationManager::SimulationManager() :
-	_agents(50000)
+SimulationManager::SimulationManager(QualityType initialQuality) :
+	_shapeTypeNames({"Circle", "Square", "Random"}),
+	_angleTypeNames({"Center In", "Center Out", "Random"}),
+	_paletteTypeNames({"Slime", "Fiery", "Greyscale", "Rainbow", "UV"}),
+	_qualityTypeNames({"Low", "Medium", "High"})
 {
-	for (auto& agent : _agents)
+	_drawCS = ComputeShaderStore::Get("draw.comp");
+	_blendEvapCS = ComputeShaderStore::Get("blendEvap.comp");
+	_painterCS = ComputeShaderStore::Get("painter.comp");
+
+	// Palette read-textures
+	const String filepaths[] = {"slimeAlt.png", "fieryAlt.png", "greyscaleAlt.png", "rainbowAlt.png", "uvAlt.png"};
+
+	for (int i = 0; i < _palettes.size(); i++)
 	{
-		agent.Position = sf::Vector2f(_texWidth, _texHeight) / 2.0f;
-		agent.Angle = Random::Real() * Math::PI * 2.0f;
+		auto image = ImageStore::Get("Pals/" + filepaths[i]);
+		SE_CORE_ASSERT(image->getSize().x == _paletteWidth && image->getSize().y == 1);
+		_paletteImages[i] = image;
+
+		_palettes[i].loadFromImage(*image);
+		const auto size = _palettes[i].getSize();
+
+		glBindTexture(GL_TEXTURE_2D, _palettes[i].getNativeHandle());
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, image->getPixelsPtr());
 	}
+	glBindTexture(GL_TEXTURE_2D, 0);
 
-
-	_drawProgram = CreateComputeProgram("res/shaders/draw.comp");
-	_blendEvapProgram = CreateComputeProgram("res/shaders/blendEvap.comp");
-
-	GLuint tex_output;
-	glGenTextures(1, &tex_output);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, tex_output);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, _texWidth, _texHeight, 0, GL_RGBA, GL_FLOAT, NULL);
-	glBindImageTexture(0, tex_output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
-
-	struct Ssbo_data
-	{
-		Agent agents[50000];
-	};
-
-	auto* ssbo_data = new Ssbo_data();
-
-	std::memcpy(&ssbo_data->agents, _agents.data(), _agents.size() * sizeof(Agent));
-
-
+	// SSBO
+	SetQuality(initialQuality);
+	_qualityTypeIndex = static_cast<int>(initialQuality);
 	glGenBuffers(1, &_ssbo);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, _ssbo);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(Ssbo_data), ssbo_data, GL_DYNAMIC_DRAW);
-	//sizeof(data) only works for statically sized C/C++ arrays.
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, _ssbo);
 
+	// Palette-transitions
+	_currentPaletteImage.create(_paletteWidth, 1, _paletteImages[static_cast<int>(_desiredPalette)]->getPixelsPtr());
+	_currentPaletteTexture.loadFromImage(_currentPaletteImage);
 
-	delete ssbo_data;
+	for (int i = 0; i < _paletteWidth; i++)
+	{
+		const auto pix = _currentPaletteImage.getPixel(i, 0);
+		_colorsStart[i] = {
+			static_cast<float>(pix.r) / 255.0f, static_cast<float>(pix.g) / 255.0f, static_cast<float>(pix.b) / 255.0f,
+			static_cast<float>(pix.a) / 255.0f
+		};
+	}
+	_colorsCurrent = _colorsStart;
+
+	Transition(_shapeType, _angleType);
 }
 
 void SimulationManager::OnUpdate(Scene& scene)
 {
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, _texOutput);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, _texWidth, _texHeight, 0, GL_RGBA, GL_FLOAT, NULL);
-	glBindImageTexture(0, _texOutput, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+	UpdatePaletteTransition();
+	UpdatePaletteData();
 
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, _ssbo);
+	glBindImageTexture(0, _outputTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+	glBindImageTexture(1, _dataTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
+	glBindImageTexture(2, _currentPaletteTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
 
+	if (_stateType != StateType::Paused)
 	{
-		// launch compute shaders!
-		glUseProgram(_drawProgram);
-		glDispatchCompute((GLuint)_agents.size(), 1, 1);
+		const float dt = 1.0f / 150.0f;
+
+		if (!_inTransition)
+		{
+			RunDrawFrame();
+		}
+
+		_blendEvapCS->SetFloat("dt", dt);
+		_blendEvapCS->SetFloat("diffuseSpeed", _inTransition ? 40.0f : _diffuseSpeed);
+		_blendEvapCS->SetFloat("evaporateSpeed", _inTransition ? 80.0f : _evaporateSpeed);
+		_blendEvapCS->SetInt("blendSize", 3.0f);
+		_blendEvapCS->Dispatch(_texWidth, _texHeight, 1);
 	}
-	{
-		// launch compute shaders!
-		glUseProgram(_blendEvapProgram);
-		glDispatchCompute(_texWidth, _texHeight, 1);
-	}
 
-	// make sure writing to image has finished before read
-	glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+	_painterCS->SetFloat("maxPixelValue", _colorScale);
+	_painterCS->SetInt("paletteWidth", _paletteWidth);
+	_painterCS->Dispatch(_texWidth, _texHeight, 1);
 
-
-	auto* pixels = new sf::Color[_texWidth * _texHeight];
-	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-
-	glGetBufferSubData(GL_TEXTURE_2D, 0, _texWidth * _texHeight * sizeof(sf::Color), pixels);
-
-	sf::Image image;
-	image.create(_texWidth, _texHeight, reinterpret_cast<sf::Uint8*>(pixels));
-
-	_tex.loadFromImage(image);
-
-	delete[] pixels;
-
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind
+	ComputeShader::AwaitFinish();
 
 	Application::Get().GetWindow().GetNativeWindow().resetGLStates();
 }
 
 void SimulationManager::OnRender(Scene& scene)
 {
-	sf::Sprite sprite(_tex);
-	sprite.setPosition(-_texWidth / 2.0f, -_texHeight / 2.0f);
+	const auto size = scene.GetViewportPane().GetViewportSize();
+	const auto diff = sf::Vector2f(size.x / _texWidth, size.y / _texHeight);
+
+	sf::Sprite sprite(_outputTexture);
+	sprite.setPosition(-size.x / 2.0f, -size.y / 2.0f);
+	sprite.setScale(diff.x, diff.y);
 	scene.Submit(sprite);
 }
 
-GLuint SimulationManager::CreateComputeProgram(const char* filepath)
+void SimulationManager::OnGuiRender()
 {
-	std::string content;
-	std::ifstream fileStream(filepath, std::ios::in);
-
-	if (!fileStream.is_open())
+	if (ImGui::Button(_stateType == StateType::Paused ? "Start" : "Pause", {ImGui::GetContentRegionAvailWidth(), 0.0f}))
 	{
-		std::cerr << "Could not read file " << filepath << ". File does not exist." << std::endl;
+		_stateType = _stateType == StateType::Paused ? StateType::Running : StateType::Paused;
 	}
 
-	std::string line;
-	while (!fileStream.eof())
+	ImGui::Separator();
+
+	Gui::BeginPropertyGrid("Simulation Manager");
+	Gui::Property("Movement Speed", _movementSpeed, 10.0f, 500.0f, 1.0f, Gui::PropertyFlag_Slider);
+	Gui::Property("Trail Attraction", _trailAttraction, 10.0f, 500.0f, 1.0f, Gui::PropertyFlag_Slider);
+	Gui::Property("Diffuse Speed", _diffuseSpeed, 0.0f, 25.0f, 0.01f, Gui::PropertyFlag_Slider);
+	Gui::Property("Evaporate Speed", _evaporateSpeed, 0.0, 25.0f, 0.01f, Gui::PropertyFlag_Slider);
+	Gui::Property("Color Scale", _colorScale, 1.0, 25.0f, 0.5f, Gui::PropertyFlag_Slider);
+	Gui::EndPropertyGrid();
+
+	ImGui::Separator();
+
+	Gui::BeginPropertyGrid("Reset Patterns");
+	ImGui::Text("Reset Shape");
+	ImGui::NextColumn();
+	ImGui::PushItemWidth(-1);
+	ImGui::Combo("##Shape Type", &_shapeTypeIndex, _shapeTypeNames.data(), _shapeTypeNames.size());
+	ImGui::NextColumn();
+	ImGui::Text("Reset Angle");
+	ImGui::NextColumn();
+	ImGui::PushItemWidth(-1);
+	ImGui::Combo("##Angle Type", &_angleTypeIndex, _angleTypeNames.data(), _angleTypeNames.size());
+	ImGui::NextColumn();
+	Gui::Property("Reset", [this]
 	{
-		std::getline(fileStream, line);
-		content.append(line + "\n");
+		Transition(static_cast<ShapeType>(_shapeTypeIndex), static_cast<AngleType>(_angleTypeIndex));
+	});
+	Gui::EndPropertyGrid();
+
+	ImGui::Separator();
+
+	Gui::BeginPropertyGrid("Quality");
+	ImGui::Text("Quality");
+	ImGui::NextColumn();
+	ImGui::PushItemWidth(-1);
+	if (ImGui::Combo("##Quality", &_qualityTypeIndex, _qualityTypeNames.data(), _qualityTypeNames.size()))
+	{
+		SetQuality(static_cast<QualityType>(_qualityTypeIndex));
+	}
+	ImGui::NextColumn();
+	Gui::EndPropertyGrid();
+
+	ImGui::Separator();
+
+	Gui::BeginPropertyGrid("Palette");
+	ImGui::Text("Palette");
+	ImGui::NextColumn();
+	ImGui::PushItemWidth(-1);
+	if (ImGui::Combo("##Palette", &_paletteTypeIndex, _paletteTypeNames.data(), _paletteTypeNames.size()))
+	{
+		SetPalette(static_cast<PaletteType>(_paletteTypeIndex));
+	}
+	ImGui::NextColumn();
+	Gui::EndPropertyGrid();
+	ImGui::Dummy({1.0f, 2.0f});
+	Gui::Image(_currentPaletteTexture, sf::Vector2f(ImGui::GetContentRegionAvailWidth(), 9.0f));
+}
+
+void SimulationManager::UpdatePaletteTransition()
+{
+	if (_colorTransitionTimer <= _colorTransitionDuration)
+	{
+		const float delta = (std::sin((_colorTransitionTimer / _colorTransitionDuration) * PI<> - PI<> / 2.0f) + 1.0f) /
+			2.0f;
+		for (int x = 0; x < _paletteWidth; x++)
+		{
+			const auto pix = _paletteImages[static_cast<int>(_desiredPalette)]->getPixel(x, 0);
+			const sf::Vector4f goalColor = {
+				static_cast<float>(pix.r) / 255.0f, static_cast<float>(pix.g) / 255.0f,
+				static_cast<float>(pix.b) / 255.0f, static_cast<float>(pix.a) / 255.0f
+			};
+			const auto& startColor = _colorsStart[x];
+			auto& currentColor = _colorsCurrent[x];
+			currentColor.x = startColor.x + delta * (goalColor.x - startColor.x);
+			currentColor.y = startColor.y + delta * (goalColor.y - startColor.y);
+			currentColor.z = startColor.z + delta * (goalColor.z - startColor.z);
+			_currentPaletteImage.setPixel(x, 0, {
+				                              static_cast<sf::Uint8>(currentColor.x * 255.0f),
+				                              static_cast<sf::Uint8>(currentColor.y * 255.0f),
+				                              static_cast<sf::Uint8>(currentColor.z * 255.0f),
+				                              static_cast<sf::Uint8>(currentColor.w * 255.0f)
+			                              });
+		}
+		_colorTransitionTimer += Global::Clock::GetFrameTime();
+	}
+}
+
+void SimulationManager::UpdatePaletteData()
+{
+	glBindTexture(GL_TEXTURE_2D, _currentPaletteTexture.getNativeHandle());
+	const auto size = _currentPaletteTexture.getSize();
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+	             _currentPaletteImage.getPixelsPtr());
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+Function<sf::Vector2f(int)> SimulationManager::GetPositionGenerator(ShapeType shapeType)
+{
+	switch (_shapeType)
+	{
+	case ShapeType::Circle:
+	{
+		return [this](int index)
+		{
+			const float relative = static_cast<float>(index) / static_cast<float>(_agentBuffer.size()) * 2.0f *
+				Math::PI;
+
+			const float multiplier = Random::Real() * (_texHeight / 3.0f - 50.0f);
+			const auto offset = sf::Vector2f(_texWidth, _texHeight) / 2.0f;
+			return sf::Vector2f(std::cos(relative), std::sin(relative)) * multiplier + offset;
+		};
+	}
+	case ShapeType::Square:
+	{
+		return [this](int index)
+		{
+			const size_t rowSize = std::sqrt(_agentBuffer.size());
+			const float unitX = static_cast<float>(index % rowSize) / static_cast<float>(rowSize);
+			const float unitY = static_cast<float>(index / rowSize) / static_cast<float>(rowSize);
+
+			const float multiplier = Random::Real() * (std::min(_texWidth, _texHeight) - 50.0f);
+			const auto offset = sf::Vector2f(_texWidth, _texHeight) / 3.0f - sf::Vector2f(multiplier, multiplier) /
+				2.0f;
+			return sf::Vector2f(unitX, unitY) * multiplier + offset;
+		};
+	}
+	case ShapeType::Random:
+	{
+		return [this](int index)
+		{
+			return Random::Vec2(VecUtils::Null<>(), sf::Vector2f(_texWidth, _texHeight));
+		};
+	}
+	default:
+	{
+		SE_CORE_FALSE_ASSERT("Invalid Shape Type");
+		return {};
+	}
+	}
+}
+
+Function<float(int)> SimulationManager::GetAngleGenerator(AngleType angleType)
+{
+	switch (_angleType)
+	{
+	case AngleType::CenterIn:
+	{
+		return [this](int index)
+		{
+			return 180.0f + static_cast<float>(index) / static_cast<float>(_agentBuffer.size()) * 2.0f * Math::PI;
+		};
+	}
+	case AngleType::CenterOut:
+	{
+		return [this](int index)
+		{
+			return static_cast<float>(index) / static_cast<float>(_agentBuffer.size()) * 2.0f * Math::PI;
+		};
+	}
+	case AngleType::Random:
+	{
+		return [this](int index)
+		{
+			return Random::Real() * 2.0f * Math::PI;
+		};
+	}
+	default: SE_CORE_FALSE_ASSERT("Invalid Angle Type");
+		return {};
+	}
+}
+
+void SimulationManager::SetShape(const Function<sf::Vector2f(int)>& generator)
+{
+	for (int i = 0; i < _agentBuffer.size(); i++)
+	{
+		_agentBuffer[i].Position = generator(i);
+	}
+}
+
+void SimulationManager::SetAngles(const Function<float(int)>& generator)
+{
+	for (int i = 0; i < _agentBuffer.size(); i++)
+	{
+		_agentBuffer[i].Angle = generator(i);
+	}
+}
+
+void SimulationManager::SetPalette(PaletteType desired)
+{
+	_desiredPalette = desired;
+	_colorTransitionTimer = sf::Time::Zero;
+	_colorsStart = _colorsCurrent;
+}
+
+void SimulationManager::SetQuality(QualityType quality)
+{
+	switch (quality)
+	{
+	case QualityType::Low:
+	{
+		SetTexSize(700, 400);
+		SetAgentDimensionSize(128);
+		break;
+	}
+	case QualityType::Medium:
+	{
+		SetTexSize(1400, 800);
+		SetAgentDimensionSize(512);
+		break;
+	}
+	case QualityType::High:
+	{
+		SetTexSize(2800, 1600);
+		SetAgentDimensionSize(2048);
+		break;
+	}
+	default:
+	{
+		SE_CORE_FALSE_ASSERT("Invalid Quality Type");
+	}
+	}
+	Transition(_shapeType, _angleType);
+}
+
+void SimulationManager::SetTexSize(Uint32 width, Uint32 height)
+{
+	if (_texWidth == width && _texHeight == height)
+	{
+		return;
 	}
 
-	fileStream.close();
+	_texWidth = width;
+	_texHeight = height;
 
-	const auto shader = glCreateShader(GL_COMPUTE_SHADER);
-	const auto* contentCStr = content.c_str();
-	glShaderSource(shader, 1, &contentCStr, nullptr);
-	glCompileShader(shader);
-	// check for compilation errors as per normal here
+	_dataTexture.create(_texWidth, _texHeight);
+	_outputTexture.create(_texWidth, _texHeight);
 
-	const auto program = glCreateProgram();
-	glAttachShader(program, shader);
-	glLinkProgram(program);
+	glBindTexture(GL_TEXTURE_2D, _dataTexture.getNativeHandle());
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, _texWidth, _texHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+	glBindTexture(GL_TEXTURE_2D, _outputTexture.getNativeHandle());
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, _texWidth, _texHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
 
-	return program;
+void SimulationManager::SetAgentDimensionSize(Uint32 size)
+{
+	_agentBuffer.resize(size * size);
+	_agentDim = size;
+}
+
+void SimulationManager::Reset(ShapeType shapeType, AngleType angleType)
+{
+	_angleType = angleType;
+	_shapeType = shapeType;
+
+	const auto angleGenerator = GetAngleGenerator(angleType);
+	const auto positionGenerator = GetPositionGenerator(shapeType);
+
+	SetAngles(angleGenerator);
+	SetShape(positionGenerator);
+
+	const auto alloc = _agentBuffer.size() * sizeof(Agent);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, _ssbo);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, alloc, _agentBuffer.data(), GL_DYNAMIC_DRAW);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	RunDrawFrame();
+
+	ComputeShader::AwaitFinish();
+}
+
+void SimulationManager::Transition(ShapeType shapeTypeTo, AngleType angleTypeTo)
+{
+	if (!_inTransition)
+	{
+		_stateType = StateType::Running;
+		_inTransition = true;
+
+		Run::After([this, shapeTypeTo, angleTypeTo]
+		{
+			_stateType = StateType::Paused;
+			Reset(shapeTypeTo, angleTypeTo);
+			_inTransition = false;
+		}, sf::seconds(1.0f));
+	}
+}
+
+void SimulationManager::RunDrawFrame()
+{
+	const float dt = 1.0f / 150.0f;
+
+	glBindImageTexture(0, _outputTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+	glBindImageTexture(1, _dataTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
+	glBindImageTexture(2, _currentPaletteTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, _ssbo);
+
+	_drawCS->SetInt("agentDim", _agentDim);
+	_drawCS->SetFloat("width", _texWidth);
+	_drawCS->SetFloat("height", _texHeight);
+	_drawCS->SetFloat("dt", dt);
+	_drawCS->SetFloat("moveSpeed", _movementSpeed);
+	_drawCS->SetFloat("turnSpeed", _trailAttraction);
+	_drawCS->SetFloat("sensorAngleSpacing", Math::PI / 8.0f);
+	_drawCS->SetFloat("maxPixelValue", 5.0);
+	_drawCS->Dispatch(_agentDim, _agentDim, 1);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 }
