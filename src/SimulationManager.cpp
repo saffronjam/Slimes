@@ -145,6 +145,8 @@ void SimulationManager::OnGuiRender()
 		SetQuality(static_cast<QualityType>(_qualityTypeIndex));
 	}
 	ImGui::NextColumn();
+	Gui::Property("Agents", std::to_string(_agentDim * _agentDim) );
+	Gui::Property("Texture Size", std::to_string(_texWidth) + "x" + std::to_string(_texHeight) + " px");
 	Gui::EndPropertyGrid();
 
 	ImGui::Separator();

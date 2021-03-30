@@ -78,7 +78,6 @@ private:
 
 	StateType _stateType = StateType::Paused;
 	
-	QualityType _qualityType;
 	Uint32 _agentDim;
 	Uint32 _texWidth;
 	Uint32 _texHeight;
@@ -102,7 +101,7 @@ private:
 	Array<sf::Texture, static_cast<size_t>(PaletteType::Count)> _palettes;
 	sf::Image _currentPaletteImage;
 	sf::Texture _currentPaletteTexture;
-	PaletteType _desiredPalette = PaletteType::Fiery;
+	PaletteType _desiredPalette = PaletteType::Slime;
 	Array<sf::Vector4f, _paletteWidth> _colorsStart;
 	Array<sf::Vector4f, _paletteWidth> _colorsCurrent;
 
@@ -113,8 +112,8 @@ private:
 	// Gui cache
 	float _movementSpeed = 250.0f;
 	float _trailAttraction = 250.0f;
-	float _diffuseSpeed = 2.0f;
-	float _evaporateSpeed = 0.8f;
+	float _diffuseSpeed = 5.0f;
+	float _evaporateSpeed = 6.5f;
 	float _colorScale = 5.0f;
 
 	ArrayList<const char*> _shapeTypeNames;
