@@ -95,6 +95,16 @@ void ComputeShader::SetFloat(const String& name, float value)
 	});
 }
 
+void ComputeShader::SetDouble(const String& name, double value)
+{
+	BindThenUnbind([&]
+	{
+		const auto loc = glGetUniformLocation(_id, name.c_str());
+		SE_CORE_ASSERT(loc != -1);
+		glUniform1d(loc, value);
+	});
+}
+
 void ComputeShader::SetInt(const String& name, int value)
 {
 	BindThenUnbind([&]
@@ -105,7 +115,22 @@ void ComputeShader::SetInt(const String& name, int value)
 	});
 }
 
-void ComputeShader::SetVec4(const String& name, const sf::Vector4f& value)
+void ComputeShader::SetVector2d(const String& name, const sf::Vector2<double>& value)
+{
+	BindThenUnbind([&]
+	{
+		const auto loc = glGetUniformLocation(_id, name.c_str());
+		SE_CORE_ASSERT(loc != -1);
+		glUniform2d(loc, value.x, value.y);
+	});
+}
+
+void ComputeShader::SetVector2d(const String& name, const Complex<double>& value)
+{
+	SetVector2d(name, sf::Vector2<double>(value.real(), value.imag()));
+}
+
+void ComputeShader::SetVector4f(const String& name, const sf::Vector4f& value)
 {
 	BindThenUnbind([&]
 	{

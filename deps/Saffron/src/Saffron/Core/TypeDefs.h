@@ -20,6 +20,7 @@
 #include <deque>
 #include <stack>
 #include <list>
+#include <complex>
 
 namespace Se
 {
@@ -43,48 +44,50 @@ typedef long long Int64;
 typedef unsigned long long Uint64;
 #endif
 
-template<typename T>
+template <typename T>
 using ArrayList = std::vector<T>;
 template <class _Ty, size_t _size>
 using Array = std::array<_Ty, _size>;
-template<typename Key, typename Value>
+template <typename Key, typename Value>
 using Map = std::map<Key, Value>;
-template<typename Key, typename Value>
+template <typename Key, typename Value>
 using MultiMap = std::multimap<Key, Value>;
-template<typename Key, typename Value>
+template <typename Key, typename Value>
 using UnorderedMap = std::unordered_map<Key, Value>;
 template <class T>
 using Set = std::set<T>;
-template<typename T>
-using UnorderedSet = std::unordered_set< T>;
-template<typename T>
+template <typename T>
+using UnorderedSet = std::unordered_set<T>;
+template <typename T>
 using Deque = std::deque<T>;
-template<typename T>
+template <typename T>
 using Stack = std::stack<T>;
-template<typename T>
+template <typename T>
 using List = std::list<T>;
 
-template<class FunctionType>
+template <class FunctionType>
 using Function = std::function<FunctionType>;
-template<class... Types>
+template <class... Types>
 using Tuple = std::tuple<Types...>;
-template<typename ClassType>
+template <typename ClassType>
 using Atomic = std::atomic<ClassType>;
-template<typename FirstClass, typename SecondClass>
+template <typename FirstClass, typename SecondClass>
 using Pair = std::pair<FirstClass, SecondClass>;
-template<typename T>
+template <typename T>
 using Optional = std::optional<T>;
 template <size_t t_NumBits>
 using Bitset = std::bitset<t_NumBits>;
 template <class t_ElemType>
 using InitializerList = std::initializer_list<t_ElemType>;
+template <typename Type>
+using Complex = std::complex<Type>;
 
 // Memory
-template<typename T>
+template <typename T>
 using Unique = std::unique_ptr<T>;
-template<typename T>
+template <typename T>
 using Shared = std::shared_ptr<T>;
-template<typename T>
+template <typename T>
 using Weak = std::weak_ptr<T>;
 
 using String = std::string;
@@ -155,5 +158,4 @@ constexpr Shared<T> CreateSharedFromDonor(T* donor)
 	shared.reset(donor);
 	return shared;
 }
-
 }

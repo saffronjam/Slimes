@@ -9,7 +9,7 @@ namespace Se
 class SoundBufferStore : public ResourceStore<sf::SoundBuffer>
 {
 public:
-	static Shared<sf::SoundBuffer> Get(const Filepath& filepath, bool copy)
+	static Shared<sf::SoundBuffer> Get(const Filepath& filepath, bool copy = false)
 	{
 		return Instance()._Get(filepath, copy);
 	}

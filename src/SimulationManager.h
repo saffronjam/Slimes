@@ -1,7 +1,6 @@
 #pragma once
 
 #include <SFML/Graphics.hpp>
-#include <glad/glad.h>
 #include <Saffron.h>
 
 #include "Agent.h"
@@ -73,6 +72,12 @@ private:
 
 	void RunDrawFrame();
 
+	// Fix for problem with using OpenGL freely alongside SFML
+	static void SetUniform(Uint32 id, const String &name, const sf::Vector2<double> &value);
+	static void SetUniform(Uint32 id, const String &name, float value);
+	static void SetUniform(Uint32 id, const String &name, double value);
+	static void SetUniform(Uint32 id, const String &name, int value);
+
 private:
 	static constexpr Uint32 _paletteWidth = 256;
 
@@ -85,14 +90,14 @@ private:
 	ArrayList<Agent> _agentBuffer;
 
 	sf::Image _simulationImage;
-
-	sf::Texture _outputTexture;
+	
 	sf::Texture _dataTexture;
+	sf::RenderTexture _targetTexture;
 
 	Shared<ComputeShader> _drawCS;
-	Shared<ComputeShader> _blendEvapCS;
-	Shared<ComputeShader> _painterCS;
-	GLuint _ssbo;
+	Shared<sf::Shader> _painterPS;
+	Shared<sf::Shader> _blendEvapPaintPS;
+	Uint32 _ssbo;
 
 	ShapeType _shapeType = ShapeType::Circle;
 	AngleType _angleType = AngleType::CenterIn;
@@ -110,8 +115,8 @@ private:
 	bool _inTransition = false;
 
 	// Gui cache
-	float _movementSpeed = 250.0f;
-	float _trailAttraction = 250.0f;
+	float _movementSpeed = 100.0f;
+	float _trailAttraction = 100.0f;
 	float _diffuseSpeed = 5.0f;
 	float _evaporateSpeed = 6.5f;
 	float _colorScale = 5.0f;

@@ -1,5 +1,7 @@
 #include "SaffronPCH.h"
 
+#include <glad/glad.h>
+
 #include "SimulationManager.h"
 
 namespace Se
@@ -11,8 +13,8 @@ SimulationManager::SimulationManager(QualityType initialQuality) :
 	_qualityTypeNames({"Low", "Medium", "High"})
 {
 	_drawCS = ComputeShaderStore::Get("draw.comp");
-	_blendEvapCS = ComputeShaderStore::Get("blendEvap.comp");
-	_painterCS = ComputeShaderStore::Get("painter.comp");
+	_blendEvapPaintPS = ShaderStore::Get("blendEvapPaint.frag", sf::Shader::Type::Fragment);
+	_painterPS = ShaderStore::Get("painter.frag", sf::Shader::Type::Fragment);
 
 	// Palette read-textures
 	const String filepaths[] = {"slimeAlt.png", "fieryAlt.png", "greyscaleAlt.png", "rainbowAlt.png", "uvAlt.png"};
@@ -58,31 +60,40 @@ void SimulationManager::OnUpdate(Scene& scene)
 	UpdatePaletteTransition();
 	UpdatePaletteData();
 
-	glBindImageTexture(0, _outputTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 	glBindImageTexture(1, _dataTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
 	glBindImageTexture(2, _currentPaletteTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
 
+	_targetTexture.clear();
 	if (_stateType != StateType::Paused)
 	{
-		const float dt = 1.0f / 150.0f;
+		const float dt = Global::Clock::GetFrameTime().asSeconds();
 
 		if (!_inTransition)
 		{
 			RunDrawFrame();
 		}
 
-		_blendEvapCS->SetFloat("dt", dt);
-		_blendEvapCS->SetFloat("diffuseSpeed", _inTransition ? 40.0f : _diffuseSpeed);
-		_blendEvapCS->SetFloat("evaporateSpeed", _inTransition ? 80.0f : _evaporateSpeed);
-		_blendEvapCS->SetInt("blendSize", 3.0f);
-		_blendEvapCS->Dispatch(_texWidth, _texHeight, 1);
+		SetUniform(_blendEvapPaintPS->getNativeHandle(), "dt", dt);
+		SetUniform(_blendEvapPaintPS->getNativeHandle(), "diffuseSpeed", _inTransition ? 40.0f : _diffuseSpeed);
+		SetUniform(_blendEvapPaintPS->getNativeHandle(), "evaporateSpeed", _inTransition ? 80.0f : _evaporateSpeed);
+		SetUniform(_blendEvapPaintPS->getNativeHandle(), "blendSize", 3);
+		SetUniform(_blendEvapPaintPS->getNativeHandle(), "maxPixelValue", _colorScale);
+		SetUniform(_blendEvapPaintPS->getNativeHandle(), "paletteWidth", static_cast<int>(_paletteWidth));
+
+		sf::RectangleShape simRectShape(sf::Vector2f(_texWidth, _texHeight));
+		simRectShape.setTexture(&_currentPaletteTexture);
+		_targetTexture.draw(simRectShape, {_blendEvapPaintPS.get()});
 	}
+	else
+	{
+		SetUniform(_painterPS->getNativeHandle(), "maxPixelValue", _colorScale);
+		SetUniform(_painterPS->getNativeHandle(), "paletteWidth", static_cast<int>(_paletteWidth));
 
-	_painterCS->SetFloat("maxPixelValue", _colorScale);
-	_painterCS->SetInt("paletteWidth", _paletteWidth);
-	_painterCS->Dispatch(_texWidth, _texHeight, 1);
-
-	ComputeShader::AwaitFinish();
+		sf::RectangleShape simRectShape(sf::Vector2f(_texWidth, _texHeight));
+		simRectShape.setTexture(&_currentPaletteTexture);
+		_targetTexture.draw(simRectShape, {_painterPS.get()});
+	}
+	_targetTexture.display();
 
 	Application::Get().GetWindow().GetNativeWindow().resetGLStates();
 }
@@ -92,7 +103,7 @@ void SimulationManager::OnRender(Scene& scene)
 	const auto size = scene.GetViewportPane().GetViewportSize();
 	const auto diff = sf::Vector2f(size.x / _texWidth, size.y / _texHeight);
 
-	sf::Sprite sprite(_outputTexture);
+	sf::Sprite sprite(_targetTexture.getTexture());
 	sprite.setPosition(-size.x / 2.0f, -size.y / 2.0f);
 	sprite.setScale(diff.x, diff.y);
 	scene.Submit(sprite);
@@ -145,7 +156,7 @@ void SimulationManager::OnGuiRender()
 		SetQuality(static_cast<QualityType>(_qualityTypeIndex));
 	}
 	ImGui::NextColumn();
-	Gui::Property("Agents", std::to_string(_agentDim * _agentDim) );
+	Gui::Property("Agents", std::to_string(_agentDim * _agentDim));
 	Gui::Property("Texture Size", std::to_string(_texWidth) + "x" + std::to_string(_texHeight) + " px");
 	Gui::EndPropertyGrid();
 
@@ -223,14 +234,10 @@ Function<sf::Vector2f(int)> SimulationManager::GetPositionGenerator(ShapeType sh
 	{
 		return [this](int index)
 		{
-			const size_t rowSize = std::sqrt(_agentBuffer.size());
-			const float unitX = static_cast<float>(index % rowSize) / static_cast<float>(rowSize);
-			const float unitY = static_cast<float>(index / rowSize) / static_cast<float>(rowSize);
+			const sf::Vector2f toMiddle = sf::Vector2f(_texWidth, _texHeight) / 2.0f;
+			const float randomRange = (std::min(_texWidth, _texHeight) / 2.5f) / 2.0f;
 
-			const float multiplier = Random::Real() * (std::min(_texWidth, _texHeight) - 50.0f);
-			const auto offset = sf::Vector2f(_texWidth, _texHeight) / 3.0f - sf::Vector2f(multiplier, multiplier) /
-				2.0f;
-			return sf::Vector2f(unitX, unitY) * multiplier + offset;
+			return toMiddle + Random::Vec2(-randomRange, -randomRange, randomRange, randomRange);
 		};
 	}
 	case ShapeType::Random:
@@ -319,8 +326,8 @@ void SimulationManager::SetQuality(QualityType quality)
 	}
 	case QualityType::High:
 	{
-		SetTexSize(2800, 1600);
-		SetAgentDimensionSize(2048);
+		SetTexSize(2100, 1200);
+		SetAgentDimensionSize(1024);
 		break;
 	}
 	default:
@@ -342,11 +349,11 @@ void SimulationManager::SetTexSize(Uint32 width, Uint32 height)
 	_texHeight = height;
 
 	_dataTexture.create(_texWidth, _texHeight);
-	_outputTexture.create(_texWidth, _texHeight);
+	_targetTexture.create(_texWidth, _texHeight);
 
 	glBindTexture(GL_TEXTURE_2D, _dataTexture.getNativeHandle());
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, _texWidth, _texHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
-	glBindTexture(GL_TEXTURE_2D, _outputTexture.getNativeHandle());
+	glBindTexture(GL_TEXTURE_2D, _targetTexture.getTexture().getNativeHandle());
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, _texWidth, _texHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
@@ -398,7 +405,6 @@ void SimulationManager::RunDrawFrame()
 {
 	const float dt = 1.0f / 150.0f;
 
-	glBindImageTexture(0, _outputTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 	glBindImageTexture(1, _dataTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
 	glBindImageTexture(2, _currentPaletteTexture.getNativeHandle(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, _ssbo);
@@ -414,5 +420,49 @@ void SimulationManager::RunDrawFrame()
 	_drawCS->Dispatch(_agentDim, _agentDim, 1);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void SimulationManager::SetUniform(Uint32 id, const String& name, const sf::Vector2<double>& value)
+{
+	glUseProgram(id);
+
+	const auto loc = glGetUniformLocation(id, name.c_str());
+	SE_CORE_ASSERT(loc != -1);
+	glUniform2d(loc, value.x, value.y);
+
+	glUseProgram(0);
+}
+
+void SimulationManager::SetUniform(Uint32 id, const String& name, float value)
+{
+	glUseProgram(id);
+
+	const auto loc = glGetUniformLocation(id, name.c_str());
+	SE_CORE_ASSERT(loc != -1);
+	glUniform1f(loc, value);
+
+	glUseProgram(0);
+}
+
+void SimulationManager::SetUniform(Uint32 id, const String& name, double value)
+{
+	glUseProgram(id);
+
+	const auto loc = glGetUniformLocation(id, name.c_str());
+	SE_CORE_ASSERT(loc != -1);
+	glUniform1d(loc, value);
+
+	glUseProgram(0);
+}
+
+void SimulationManager::SetUniform(Uint32 id, const String& name, int value)
+{
+	glUseProgram(id);
+
+	const auto loc = glGetUniformLocation(id, name.c_str());
+	SE_CORE_ASSERT(loc != -1);
+	glUniform1i(loc, value);
+
+	glUseProgram(0);
 }
 }

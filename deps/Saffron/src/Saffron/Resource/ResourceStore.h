@@ -16,14 +16,16 @@ public:
 	{
 		String newFilepath(GetLocation().string() + filepath.string());
 		Shared<Value> newResoure;
-		if (_resources.find(newFilepath) == _resources.end())
+
+		auto result = _resources.find(newFilepath);
+		if (result == _resources.end() || result->second.expired())
 		{
 			newResoure = Load(newFilepath);
 			_resources.emplace(newFilepath, newResoure);
 		}
 		else
 		{
-			newResoure = _resources.at(newFilepath).lock();
+			newResoure = result->second.lock();
 		}
 		
 		if (copy)
