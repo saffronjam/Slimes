@@ -17,7 +17,7 @@ SimulationManager::SimulationManager(QualityType initialQuality) :
 	_painterPS = ShaderStore::Get("painter.frag", sf::Shader::Type::Fragment);
 
 	// Palette read-textures
-	const String filepaths[] = {"slimeAlt.png", "fieryAlt.png", "greyscaleAlt.png", "rainbowAlt.png", "uvAlt.png"};
+	const String filepaths[] = {"slimeLarge.png", "fieryLarge.png", "greyscaleLarge.png", "rainbowLarge.png", "uvLarge.png"};
 
 	for (int i = 0; i < _palettes.size(); i++)
 	{

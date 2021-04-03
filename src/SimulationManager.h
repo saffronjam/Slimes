@@ -79,7 +79,7 @@ private:
 	static void SetUniform(Uint32 id, const String &name, int value);
 
 private:
-	static constexpr Uint32 _paletteWidth = 256;
+	static constexpr Uint32 _paletteWidth = 2048;
 
 	StateType _stateType = StateType::Paused;
 	
